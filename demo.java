@@ -25,8 +25,8 @@ public class demo extends Applet {
     private short userDataLen; 
     final static short MAX_DATA_SIZE = (short) 256;
     
-    // Khai bÃ¡o bien RSA vÃ  luu ID the
-    private byte[] cardID; // Luu ID ngau nhiÃªn (8 bytes)
+    // Khai báo bien RSA và luu ID the
+    private byte[] cardID; // Luu ID ngau nhiên (8 bytes)
     private KeyPair keyPair;
     private RSAPublicKey publicKey;
     private RSAPrivateKey privateKey;     
@@ -41,14 +41,14 @@ public class demo extends Applet {
         userDataLen = 0;
         cardID = new byte[8];
         
-        // Khoi tao KeyPair RSA (DÃ¹ng 1024 bit cho nh th gi lp)
-        // Nu th tht mnh, cÃ³ th i lÃªn LENGTH_RSA_2048
+        // Khoi tao KeyPair RSA (Dùng 1024 bit cho nh th gi lp)
+        // Nu th tht mnh, có th i lên LENGTH_RSA_2048
         try {
             keyPair = new KeyPair(KeyPair.ALG_RSA, KeyBuilder.LENGTH_RSA_1024);
             publicKey = (RSAPublicKey) keyPair.getPublic();
             privateKey = (RSAPrivateKey) keyPair.getPrivate();
         } catch (CryptoException e) {
-            // X lÃ½ li nu th khÃ´ng h tr RSA (thng th JCOP u h tr)
+            // X lý li nu th không h tr RSA (thng th JCOP u h tr)
             ISOException.throwIt(ISO7816.SW_FUNC_NOT_SUPPORTED);
         } 
     }     
@@ -114,7 +114,7 @@ public class demo extends Applet {
         byte[] buf = apdu.getBuffer();         
         short len = apdu.setIncomingAndReceive(); 
 
-		// -- Lu thÃ´ng tin th --
+		// -- Lu thông tin th --
         byte pinLen = buf[ISO7816.OFFSET_CDATA];                  
         if (pinLen > MAX_PIN_SIZE || pinLen <= 0) ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
                 
@@ -128,30 +128,30 @@ public class demo extends Applet {
         Util.arrayCopy(buf, dataOffset, userData, (short)0, dataLen);         
         userDataLen = dataLen;
         
-        // 2. T sinh Card ID ngu nhiÃªn (8 bytes)
+        // 2. T sinh Card ID ngu nhiên (8 bytes)
         RandomData rng = RandomData.getInstance(RandomData.ALG_PSEUDO_RANDOM);
         rng.generateData(cardID, (short) 0, (short) 8);
         
-        // Sinh khÃ³a RSA vÃ  Tr v Public Key
+        // Sinh khóa RSA và Tr v Public Key
         keyPair.genKeyPair(); // tn thi gian nht
         
         // -- Chun b d liu tr v --
         
         short outOffset = 0;
         
-        // Copy CardID vÃ o buffer
+        // Copy CardID vào buffer
         Util.arrayCopy(cardID, (short) 0, buf, outOffset, (short) 8);
         outOffset += 8;
         
         // Copy Modulus
         short modLen = publicKey.getModulus(buf, (short)(outOffset + 2));
-        Util.setShort(buf, outOffset, modLen); // Ghi  dÃ i Mod
+        Util.setShort(buf, outOffset, modLen); // Ghi  dài Mod
         outOffset += 2;
         outOffset += modLen;
         
         // Copy Exponent
         short expLen = publicKey.getExponent(buf, (short)(outOffset + 2));
-        Util.setShort(buf, outOffset, expLen); // Ghi  dÃ i Exp
+        Util.setShort(buf, outOffset, expLen); // Ghi  dài Exp
         outOffset += 2;
         outOffset += expLen;
 
@@ -161,12 +161,15 @@ public class demo extends Applet {
         apdu.sendBytes((short)0, outOffset);
     }     
 
-    private void verifyPin(APDU apdu) {         
-        byte[] buf = apdu.getBuffer();         
-        short len = apdu.setIncomingAndReceive();                  
-        if (pin.check(buf, ISO7816.OFFSET_CDATA, (byte)len) == false) {             
-            ISOException.throwIt(ISO7816.SW_SECURITY_STATUS_NOT_SATISFIED);         
-        }     
+ private void verifyPin(APDU apdu) {
+        byte[] buf = apdu.getBuffer();
+        short len = apdu.setIncomingAndReceive();
+                if (pin.getTriesRemaining() == 0) {
+            ISOException.throwIt((short) 0x6983);
+        }
+                if (pin.check(buf, ISO7816.OFFSET_CDATA, (byte)len) == false) {
+            ISOException.throwIt((short) (0x63C0 | pin.getTriesRemaining()));
+        }
     }     
 
     private void getInfo(APDU apdu) {         
