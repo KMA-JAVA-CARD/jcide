@@ -25,8 +25,8 @@ public class demo extends Applet {
     private short userDataLen; 
     final static short MAX_DATA_SIZE = (short) 256;
     
-    // Khai b√°o bin RSA v√† lu ID th
-    private byte[] cardID; // Lu ID ngu nhi√™n (8 bytes)
+    // Khai b·o bin RSA v‡ lu ID th
+    private byte[] cardID; // Lu ID ngu nhiÍn (8 bytes)
     private KeyPair keyPair;
     private RSAPublicKey publicKey;
     private RSAPrivateKey privateKey;     
@@ -41,14 +41,14 @@ public class demo extends Applet {
         userDataLen = 0;
         cardID = new byte[8];
         
-        // Khi to KeyPair RSA (D√πng 1024 bit cho nh th gi lp)
-        // Nu th tht mnh, c√≥ th i l√™n LENGTH_RSA_2048
+        // Khi to KeyPair RSA (D˘ng 1024 bit cho nh th gi lp)
+        // Nu th tht mnh, cÛ th i lÍn LENGTH_RSA_2048
         try {
             keyPair = new KeyPair(KeyPair.ALG_RSA, KeyBuilder.LENGTH_RSA_1024);
             publicKey = (RSAPublicKey) keyPair.getPublic();
             privateKey = (RSAPrivateKey) keyPair.getPrivate();
         } catch (CryptoException e) {
-            // X l√Ω li nu th kh√¥ng h tr RSA (thng th JCOP u h tr)
+            // X l˝ li nu th khÙng h tr RSA (thng th JCOP u h tr)
             ISOException.throwIt(ISO7816.SW_FUNC_NOT_SUPPORTED);
         } 
     }     
@@ -75,7 +75,7 @@ public class demo extends Applet {
                 changePin(apdu);
                 break;
             case INS_UNBLOCK_PIN:
-                resetPin(apdu);
+resetPin(apdu);
                 break;
 			case INS_GET_CARD_ID:
 				getCardID(apdu);
@@ -85,7 +85,7 @@ public class demo extends Applet {
         }     
     }     
     
-    // c ID
+    // c ID
     private void getCardID(APDU apdu) {
         apdu.setOutgoing();
         apdu.setOutgoingLength((short) 8);
@@ -117,50 +117,50 @@ public class demo extends Applet {
         byte[] buf = apdu.getBuffer();         
         short len = apdu.setIncomingAndReceive(); 
 
-		// -- Lu th√¥ng tin th --
+		// -- Lu thÙng tin th --
         byte pinLen = buf[ISO7816.OFFSET_CDATA];                  
         if (pinLen > MAX_PIN_SIZE || pinLen <= 0) ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
                 
-        // Cp nht PIN
+        // Cp nht PIN
         pin.update(buf, (short)(ISO7816.OFFSET_CDATA + 1), pinLen);
         
-		// Lu ttin user
+		// Lu ttin user
         short dataOffset = (short)(ISO7816.OFFSET_CDATA + 1 + pinLen);         
         short dataLen = (short)(len - 1 - pinLen);                  
         if (dataLen > MAX_DATA_SIZE) ISOException.throwIt(ISO7816.SW_FILE_FULL);         
         Util.arrayCopy(buf, dataOffset, userData, (short)0, dataLen);         
         userDataLen = dataLen;
         
-        // 2. T sinh Card ID ngu nhi√™n (8 bytes)
+        // 2. T sinh Card ID ngu nhiÍn (8 bytes)
         RandomData rng = RandomData.getInstance(RandomData.ALG_PSEUDO_RANDOM);
         rng.generateData(cardID, (short) 0, (short) 8);
         
-        // Sinh kh√≥a RSA v√† Tr v Public Key
-        keyPair.genKeyPair(); // tn thi gian nht
+        // Sinh khÛa RSA v‡ Tr v Public Key
+        keyPair.genKeyPair(); // tn thi gian nht
         
-        // -- Chun b d liu tr v --
+        // -- Chun b d liu tr v --
         
         short outOffset = 0;
         
-        // Copy CardID v√†o buffer
+        // Copy CardID v‡o buffer
         Util.arrayCopy(cardID, (short) 0, buf, outOffset, (short) 8);
         outOffset += 8;
         
         // Copy Modulus
         short modLen = publicKey.getModulus(buf, (short)(outOffset + 2));
-        Util.setShort(buf, outOffset, modLen); // Ghi  d√†i Mod
+        Util.setShort(buf, outOffset, modLen); // Ghi  d‡i Mod
         outOffset += 2;
         outOffset += modLen;
         
         // Copy Exponent
         short expLen = publicKey.getExponent(buf, (short)(outOffset + 2));
-        Util.setShort(buf, outOffset, expLen); // Ghi  d√†i Exp
+        Util.setShort(buf, outOffset, expLen); // Ghi  d‡i Exp
         outOffset += 2;
         outOffset += expLen;
 
-        // Gi tt c v Swing
+        // Gi tt c v Swing
         apdu.setOutgoing();
-        apdu.setOutgoingLength(outOffset);
+apdu.setOutgoingLength(outOffset);
         apdu.sendBytes((short)0, outOffset);
     }     
 
