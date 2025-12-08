@@ -20,16 +20,23 @@ public class demo extends Applet {
     final static byte PIN_TRY_LIMIT = (byte) 0x03; 
     final static byte MAX_PIN_SIZE = (byte) 0x06;  
     
+    final static byte INS_WRITE_IMAGE = (byte) 0x10;
+    final static byte INS_READ_IMAGE = (byte) 0x11;
+    
     private OwnerPIN pin;     
     private byte[] userData; 
     private short userDataLen; 
     final static short MAX_DATA_SIZE = (short) 256;
     
-    // Khai b·o bin RSA v‡ lu ID th
-    private byte[] cardID; // Lu ID ngu nhiÍn (8 bytes)
+    private byte[] avatarImage; 
+    final static short MAX_IMAGE_SIZE = (short) 4096;
+    private short currentImageSize;
+    
+    // Khai b√°o bin RSA v√† lu ID th
+    private byte[] cardID; // Lu ID ngu nhi√™n (8 bytes)
     private KeyPair keyPair;
     private RSAPublicKey publicKey;
-    private RSAPrivateKey privateKey;     
+    private RSAPrivateKey privateKey;
 
     public static void install(byte[] bArray, short bOffset, byte bLength) {         
         new demo().register(bArray, (short) (bOffset + 1), bArray[bOffset]);     
@@ -41,16 +48,25 @@ public class demo extends Applet {
         userDataLen = 0;
         cardID = new byte[8];
         
-        // Khi to KeyPair RSA (D˘ng 1024 bit cho nh th gi lp)
-        // Nu th tht mnh, cÛ th i lÍn LENGTH_RSA_2048
+        // Khi to KeyPair RSA (D√πng 1024 bit cho nh th gi lp)
+        // Nu th tht mnh, c√≥ th i l√™n LENGTH_RSA_2048
         try {
             keyPair = new KeyPair(KeyPair.ALG_RSA, KeyBuilder.LENGTH_RSA_1024);
             publicKey = (RSAPublicKey) keyPair.getPublic();
             privateKey = (RSAPrivateKey) keyPair.getPrivate();
         } catch (CryptoException e) {
-            // X l˝ li nu th khÙng h tr RSA (thng th JCOP u h tr)
+            // X l√Ω li nu th kh√¥ng h tr RSA (thng th JCOP u h tr)
             ISOException.throwIt(ISO7816.SW_FUNC_NOT_SUPPORTED);
-        } 
+        }
+        
+        // Init mang anh
+        // Cap phat mang lon de tranh phan manh bo nho
+        try {
+            avatarImage = new byte[MAX_IMAGE_SIZE];
+            currentImageSize = 0;
+        } catch (Exception e) {
+            ISOException.throwIt(ISO7816.SW_FILE_FULL); 
+        }
     }     
 
     public void process(APDU apdu) {         
@@ -75,17 +91,27 @@ public class demo extends Applet {
                 changePin(apdu);
                 break;
             case INS_UNBLOCK_PIN:
-resetPin(apdu);
+                resetPin(apdu);
                 break;
 			case INS_GET_CARD_ID:
 				getCardID(apdu);
 				break;
+				
+			// Ghi anh
+            case INS_WRITE_IMAGE:
+                writeImage(apdu);
+                break;
+                
+            // Doc anh
+            case INS_READ_IMAGE:
+                readImage(apdu);
+                break;
             default:                 
                 ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);         
         }     
     }     
     
-    // c ID
+    // c ID
     private void getCardID(APDU apdu) {
         apdu.setOutgoing();
         apdu.setOutgoingLength((short) 8);
@@ -117,50 +143,50 @@ resetPin(apdu);
         byte[] buf = apdu.getBuffer();         
         short len = apdu.setIncomingAndReceive(); 
 
-		// -- Lu thÙng tin th --
+		// -- Lu th√¥ng tin th --
         byte pinLen = buf[ISO7816.OFFSET_CDATA];                  
         if (pinLen > MAX_PIN_SIZE || pinLen <= 0) ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
                 
-        // Cp nht PIN
+        // Cp nht PIN
         pin.update(buf, (short)(ISO7816.OFFSET_CDATA + 1), pinLen);
         
-		// Lu ttin user
+		// Lu ttin user
         short dataOffset = (short)(ISO7816.OFFSET_CDATA + 1 + pinLen);         
         short dataLen = (short)(len - 1 - pinLen);                  
         if (dataLen > MAX_DATA_SIZE) ISOException.throwIt(ISO7816.SW_FILE_FULL);         
         Util.arrayCopy(buf, dataOffset, userData, (short)0, dataLen);         
         userDataLen = dataLen;
         
-        // 2. T sinh Card ID ngu nhiÍn (8 bytes)
+        // 2. T sinh Card ID ngu nhi√™n (8 bytes)
         RandomData rng = RandomData.getInstance(RandomData.ALG_PSEUDO_RANDOM);
         rng.generateData(cardID, (short) 0, (short) 8);
         
-        // Sinh khÛa RSA v‡ Tr v Public Key
-        keyPair.genKeyPair(); // tn thi gian nht
+        // Sinh kh√≥a RSA v√† Tr v Public Key
+        keyPair.genKeyPair(); // tn thi gian nht
         
-        // -- Chun b d liu tr v --
+        // -- Chun b d liu tr v --
         
         short outOffset = 0;
         
-        // Copy CardID v‡o buffer
+        // Copy CardID v√†o buffer
         Util.arrayCopy(cardID, (short) 0, buf, outOffset, (short) 8);
         outOffset += 8;
         
         // Copy Modulus
         short modLen = publicKey.getModulus(buf, (short)(outOffset + 2));
-        Util.setShort(buf, outOffset, modLen); // Ghi  d‡i Mod
+        Util.setShort(buf, outOffset, modLen); // Ghi  d√†i Mod
         outOffset += 2;
         outOffset += modLen;
         
         // Copy Exponent
         short expLen = publicKey.getExponent(buf, (short)(outOffset + 2));
-        Util.setShort(buf, outOffset, expLen); // Ghi  d‡i Exp
+        Util.setShort(buf, outOffset, expLen); // Ghi  d√†i Exp
         outOffset += 2;
         outOffset += expLen;
 
-        // Gi tt c v Swing
+        // Gi tt c v Swing
         apdu.setOutgoing();
-apdu.setOutgoingLength(outOffset);
+        apdu.setOutgoingLength(outOffset);
         apdu.sendBytes((short)0, outOffset);
     }     
 
@@ -180,5 +206,57 @@ apdu.setOutgoingLength(outOffset);
         apdu.setOutgoing();         
         apdu.setOutgoingLength(userDataLen);                  
         apdu.sendBytesLong(userData, (short)0, userDataLen);     
-    } 
+    }
+    
+    // Ghi anh (CHUNKING RECEIVER)
+    private void writeImage(APDU apdu) {
+        // Can pin de ghi anh ?
+        // if (!pin.isValidated()) ISOException.throwIt(ISO7816.SW_SECURITY_STATUS_NOT_SATISFIED);
+
+        byte[] buf = apdu.getBuffer();
+        short len = apdu.setIncomingAndReceive();
+        
+        // Lay Offset tu P1 va P2 (P1 = High Byte, P2 = Low Byte)
+        // Day la vi tri bat dau ghi trong mang avatarImage
+        short p1 = (short) (buf[ISO7816.OFFSET_P1] & 0xFF);
+        short p2 = (short) (buf[ISO7816.OFFSET_P2] & 0xFF);
+        short offset = (short) ((p1 << 8) | p2);
+        
+        // Kiem tra tran bo nho
+        if ((short)(offset + len) > MAX_IMAGE_SIZE) {
+            ISOException.throwIt(ISO7816.SW_FILE_FULL);
+        }
+        
+        // copy data tu buffer APDU vao mang avatarImage
+        Util.arrayCopy(buf, ISO7816.OFFSET_CDATA, avatarImage, offset, len);
+        
+        // Cap nhat kich thuoc anh thuc te
+        if ((short)(offset + len) > currentImageSize) {
+            currentImageSize = (short)(offset + len);
+        }
+    }
+    
+    // Doc anh
+    private void readImage(APDU apdu) {
+        byte[] buf = apdu.getBuffer();
+        
+        // Ly Offset tu P1, P2
+        short p1 = (short) (buf[ISO7816.OFFSET_P1] & 0xFF);
+        short p2 = (short) (buf[ISO7816.OFFSET_P2] & 0xFF);
+        short offset = (short) ((p1 << 8) | p2);
+        
+        // Tinh so byte co the gui ve
+        short bytesToSend = (short) 240; // Default 240 bytes
+        if ((short)(offset + bytesToSend) > currentImageSize) {
+            bytesToSend = (short)(currentImageSize - offset);
+        }
+        
+        if (bytesToSend <= 0) {
+            ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+        }
+        
+        apdu.setOutgoing();
+        apdu.setOutgoingLength(bytesToSend);
+        apdu.sendBytesLong(avatarImage, offset, bytesToSend);
+    }
 }
