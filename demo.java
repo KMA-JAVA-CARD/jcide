@@ -12,31 +12,44 @@ public class demo extends Applet {
     final static byte CLA_APPLET = (byte) 0xA0;     
     final static byte INS_REGISTER = (byte) 0x01; 
     final static byte INS_VERIFY = (byte) 0x02;   
-    final static byte INS_GET_INFO = (byte) 0x03; 
+    
+    // final static byte INS_GET_INFO = (byte) 0x03; 
     final static byte INS_CHANGE_PIN = (byte) 0x04;
     final static byte INS_UNBLOCK_PIN = (byte) 0x05;
     final static byte INS_GET_CARD_ID = (byte) 0x06;
-
-    final static byte PIN_TRY_LIMIT = (byte) 0x03; 
-    final static byte MAX_PIN_SIZE = (byte) 0x06;  
     
     final static byte INS_WRITE_IMAGE = (byte) 0x10;
     final static byte INS_READ_IMAGE = (byte) 0x11;
     
+    final static byte PIN_TRY_LIMIT = (byte) 0x03; 
+    final static byte MAX_PIN_SIZE = (byte) 0x06;
+    
+	// AES
+    final static byte INS_SET_INFO = (byte) 0x21;
+    final static byte INS_GET_INFO_SECURE = (byte) 0x22;
+    
+    // Card info & PIN
     private OwnerPIN pin;     
     private byte[] userData; 
     private short userDataLen; 
     final static short MAX_DATA_SIZE = (short) 256;
     
+    // Image
     private byte[] avatarImage; 
     final static short MAX_IMAGE_SIZE = (short) 4096;
     private short currentImageSize;
     
-    // Khai báo bin RSA và lu ID th
-    private byte[] cardID; // Lu ID ngu nhiên (8 bytes)
+    // RSA
+    private byte[] cardID; // Luu ID ngau nhien (8 bytes)
     private KeyPair keyPair;
     private RSAPublicKey publicKey;
     private RSAPrivateKey privateKey;
+    
+    // AES
+    private AESKey aesKey; // Object contains AES key
+    private Cipher aesCipher; // Encrypt/decrypt machine
+    private MessageDigest sha; // Ham bam SHA tao tu PIN
+    private byte[] tempBuffer; // Temporary memory to calculate HASH
 
     public static void install(byte[] bArray, short bOffset, byte bLength) {         
         new demo().register(bArray, (short) (bOffset + 1), bArray[bOffset]);     
@@ -48,8 +61,7 @@ public class demo extends Applet {
         userDataLen = 0;
         cardID = new byte[8];
         
-        // Khi to KeyPair RSA (Dùng 1024 bit cho nh th gi lp)
-        // Nu th tht mnh, có th i lên LENGTH_RSA_2048
+        // Init RSA
         try {
             keyPair = new KeyPair(KeyPair.ALG_RSA, KeyBuilder.LENGTH_RSA_1024);
             publicKey = (RSAPublicKey) keyPair.getPublic();
@@ -66,6 +78,24 @@ public class demo extends Applet {
             currentImageSize = 0;
         } catch (Exception e) {
             ISOException.throwIt(ISO7816.SW_FILE_FULL); 
+        }
+        
+        // Init AES ENGINE
+        try {
+            // 1. Init empty AES Key object (AES 128 bit)
+            aesKey = (AESKey) KeyBuilder.buildKey(KeyBuilder.TYPE_AES, KeyBuilder.LENGTH_AES_128, false);
+            
+            // 2. Create Cipher AES (ECB mode, no padding - done on middleware)
+            // Use ECB for more simpler
+            aesCipher = Cipher.getInstance(Cipher.ALG_AES_BLOCK_128_ECB_NOPAD, false);
+            
+            // 3. Create SHA hash (SHA-256 or SHA-1 based on card)
+            sha = MessageDigest.getInstance(MessageDigest.ALG_SHA_256, false);
+            
+            // 4. Temporary Buffer holds the hash result (SHA-256 -> 32 bytes)
+            tempBuffer = new byte[32];
+        } catch (Exception e) {
+            ISOException.throwIt(ISO7816.SW_FUNC_NOT_SUPPORTED);
         }
     }     
 
@@ -84,9 +114,9 @@ public class demo extends Applet {
             case INS_VERIFY:                 
                 verifyPin(apdu);                 
                 break;             
-            case INS_GET_INFO:                 
-                getInfo(apdu);                 
-                break;
+            // case INS_GET_INFO:                 
+                // getInfo(apdu);                 
+                // break;
             case INS_CHANGE_PIN:
                 changePin(apdu);
                 break;
@@ -106,6 +136,14 @@ public class demo extends Applet {
             case INS_READ_IMAGE:
                 readImage(apdu);
                 break;
+                
+            case INS_SET_INFO: 
+            	setInfoSecure(apdu); 
+            	break;
+            
+            case INS_GET_INFO_SECURE: 
+            	getInfoSecure(apdu); 
+            	break;
             default:                 
                 ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);         
         }     
@@ -143,52 +181,50 @@ public class demo extends Applet {
         byte[] buf = apdu.getBuffer();         
         short len = apdu.setIncomingAndReceive(); 
 
-		// -- Lu thông tin th --
+        // Get PIN length from first byte
         byte pinLen = buf[ISO7816.OFFSET_CDATA];                  
         if (pinLen > MAX_PIN_SIZE || pinLen <= 0) ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
                 
-        // Cp nht PIN
+        // Set PIN
         pin.update(buf, (short)(ISO7816.OFFSET_CDATA + 1), pinLen);
         
-		// Lu ttin user
-        short dataOffset = (short)(ISO7816.OFFSET_CDATA + 1 + pinLen);         
-        short dataLen = (short)(len - 1 - pinLen);                  
-        if (dataLen > MAX_DATA_SIZE) ISOException.throwIt(ISO7816.SW_FILE_FULL);         
-        Util.arrayCopy(buf, dataOffset, userData, (short)0, dataLen);         
-        userDataLen = dataLen;
-        
-        // 2. T sinh Card ID ngu nhiên (8 bytes)
+        // Generate random ID
         RandomData rng = RandomData.getInstance(RandomData.ALG_PSEUDO_RANDOM);
         rng.generateData(cardID, (short) 0, (short) 8);
         
-        // Sinh khóa RSA và Tr v Public Key
-        keyPair.genKeyPair(); // tn thi gian nht
+        // Generate RSA
+        keyPair.genKeyPair(); 
         
-        // -- Chun b d liu tr v --
-        
+        // Return: [CardID] + [RSA Public Key]
         short outOffset = 0;
-        
-        // Copy CardID vào buffer
         Util.arrayCopy(cardID, (short) 0, buf, outOffset, (short) 8);
         outOffset += 8;
         
-        // Copy Modulus
         short modLen = publicKey.getModulus(buf, (short)(outOffset + 2));
-        Util.setShort(buf, outOffset, modLen); // Ghi  dài Mod
+        Util.setShort(buf, outOffset, modLen); 
         outOffset += 2;
         outOffset += modLen;
         
-        // Copy Exponent
         short expLen = publicKey.getExponent(buf, (short)(outOffset + 2));
-        Util.setShort(buf, outOffset, expLen); // Ghi  dài Exp
+        Util.setShort(buf, outOffset, expLen); 
         outOffset += 2;
         outOffset += expLen;
 
-        // Gi tt c v Swing
         apdu.setOutgoing();
         apdu.setOutgoingLength(outOffset);
         apdu.sendBytes((short)0, outOffset);
-    }     
+    }
+    
+    // Input: array PIN
+    // Logic: Hash(PIN) -> Use first 16 byte to make AES Key
+    private void genAESKey(byte[] input, short offset, short length) {
+        // Bm PIN
+        sha.reset();
+        sha.doFinal(input, offset, length, tempBuffer, (short) 0);
+        
+        // Set Key cho i tng AESKey (Ly 16 bytes u ca Hash)
+        aesKey.setKey(tempBuffer, (short) 0);
+    }
 
     private void verifyPin(APDU apdu) {         
         byte[] buf = apdu.getBuffer();
@@ -201,11 +237,83 @@ public class demo extends Applet {
         }
     }     
 
-    private void getInfo(APDU apdu) {         
-        if (!pin.isValidated()) ISOException.throwIt(ISO7816.SW_SECURITY_STATUS_NOT_SATISFIED);         
-        apdu.setOutgoing();         
-        apdu.setOutgoingLength(userDataLen);                  
-        apdu.sendBytesLong(userData, (short)0, userDataLen);     
+	// --- Encrypt ---		
+    // APDU: [PIN_LEN] [PIN] [DATA_PADDED...]
+    private void setInfoSecure(APDU apdu) {
+        byte[] buf = apdu.getBuffer();
+        short len = apdu.setIncomingAndReceive();
+        
+        // 1. Split PIN
+        byte pinLen = buf[ISO7816.OFFSET_CDATA];
+        if (pinLen > MAX_PIN_SIZE || pinLen <= 0) ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+        
+        // 2. Verify PIN
+        if (pin.check(buf, (short)(ISO7816.OFFSET_CDATA + 1), pinLen) == false) {
+            ISOException.throwIt((short) 0x6300); // Sai PIN
+        }
+        
+        // 3. Gen AES key from input PIN
+        genAESKey(buf, (short)(ISO7816.OFFSET_CDATA + 1), pinLen);
+        
+        // 4. Prepare data for encrypting
+        // Data start after PIN
+        short dataOffset = (short)(ISO7816.OFFSET_CDATA + 1 + pinLen);
+        short dataLen = (short)(len - 1 - pinLen);
+        
+        // Validate data length (/// 16)
+        if (dataLen % 16 != 0) ISOException.throwIt(ISO7816.SW_DATA_INVALID);
+        if (dataLen > MAX_DATA_SIZE) ISOException.throwIt(ISO7816.SW_FILE_FULL);
+        
+        // 5. Encrypt
+        // Init Cipher with Mode Encrypt and generated Key
+        aesCipher.init(aesKey, Cipher.MODE_ENCRYPT);
+        
+        // Encrypting directly from buffer to userData
+        // Input: buf[dataOffset] ...
+        // Output: userData[0] ...
+        aesCipher.doFinal(buf, dataOffset, dataLen, userData, (short) 0);
+        
+        // Save the actual length
+        userDataLen = dataLen;
+        
+        // delete key from RAM (Optional, aesKey is transient-like)
+        aesKey.clearKey();
+    }
+
+    // --- DECRYPT ---
+    // APDU: [PIN_LEN] [PIN]
+    private void getInfoSecure(APDU apdu) {
+        byte[] buf = apdu.getBuffer();
+        short len = apdu.setIncomingAndReceive();
+        
+        // 1. Split PIN
+        byte pinLen = buf[ISO7816.OFFSET_CDATA];
+        
+        // 2. Verify PIN
+        if (pin.check(buf, (short)(ISO7816.OFFSET_CDATA + 1), pinLen) == false) {
+            ISOException.throwIt((short) 0x6300);
+        }
+        
+        // 3. generate AES key from PIN
+        genAESKey(buf, (short)(ISO7816.OFFSET_CDATA + 1), pinLen);
+        
+        // 4. (Decrypt)
+        // Init Cipher Mode Decrypt
+        aesCipher.init(aesKey, Cipher.MODE_DECRYPT);
+        
+        // Input: userData[0] ...
+        // Output: buf[0] ...
+        // *** userDataLen > 0
+        if (userDataLen <= 0) ISOException.throwIt(ISO7816.SW_DATA_INVALID);
+        
+        aesCipher.doFinal(userData, (short) 0, userDataLen, buf, (short) 0);
+        
+        // 5. return plain text
+        apdu.setOutgoing();
+        apdu.setOutgoingLength(userDataLen);
+        apdu.sendBytes((short)0, userDataLen);
+        
+        aesKey.clearKey();
     }
     
     // Ghi anh (CHUNKING RECEIVER)
