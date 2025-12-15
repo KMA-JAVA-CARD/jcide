@@ -11,23 +11,23 @@ import javacardx.crypto.*;
 public class demo extends Applet {
     final static byte CLA_APPLET = (byte) 0xA0;     
     final static byte INS_REGISTER = (byte) 0x01; 
-    final static byte INS_VERIFY = (byte) 0x02;   
-    
+    final static byte INS_VERIFY = (byte) 0x02;
+
     // final static byte INS_GET_INFO = (byte) 0x03; 
     final static byte INS_CHANGE_PIN = (byte) 0x04;
     final static byte INS_UNBLOCK_PIN = (byte) 0x05;
     final static byte INS_GET_CARD_ID = (byte) 0x06;
-    
+
     final static byte INS_WRITE_IMAGE = (byte) 0x10;
     final static byte INS_READ_IMAGE = (byte) 0x11;
-    
+
     final static byte PIN_TRY_LIMIT = (byte) 0x03; 
     final static byte MAX_PIN_SIZE = (byte) 0x06;
-    
+
 	// AES
     final static byte INS_SET_INFO = (byte) 0x21;
     final static byte INS_GET_INFO_SECURE = (byte) 0x22;
-    
+
     // Card info & PIN
     private OwnerPIN pin;     
     private byte[] userData; 
@@ -53,14 +53,14 @@ public class demo extends Applet {
 
     public static void install(byte[] bArray, short bOffset, byte bLength) {         
         new demo().register(bArray, (short) (bOffset + 1), bArray[bOffset]);     
-    }     
+    }
 
     protected demo() {
 		pin = new OwnerPIN(PIN_TRY_LIMIT, MAX_PIN_SIZE);                  
         userData = new byte[MAX_DATA_SIZE];         
         userDataLen = 0;
         cardID = new byte[8];
-        
+
         // Init RSA
         try {
             keyPair = new KeyPair(KeyPair.ALG_RSA, KeyBuilder.LENGTH_RSA_1024);
@@ -152,8 +152,20 @@ public class demo extends Applet {
     // c ID
     private void getCardID(APDU apdu) {
         apdu.setOutgoing();
-        apdu.setOutgoingLength((short) 8);
+        apdu.setOutgoingLength((short) 9);
+        
+        // gui truoc 8 bytes ID
         apdu.sendBytesLong(cardID, (short) 0, (short) 8);
+        
+        // Gui byte thu 9: Trang thai PIN
+        // 0x00: Active, 0x01: Blocked
+        byte[] status = new byte[1];
+        if (pin.getTriesRemaining() == 0) {
+            status[0] = 0x01; // Blocked
+        } else {
+            status[0] = 0x00; // Active
+        }
+        apdu.sendBytesLong(status, (short) 0, (short) 1);
     }
 
     private void changePin(APDU apdu) {
@@ -162,19 +174,61 @@ public class demo extends Applet {
         }
 
         byte[] buf = apdu.getBuffer();
-        byte len = (byte)apdu.setIncomingAndReceive();
+        short len = apdu.setIncomingAndReceive();
         
-        if (len > MAX_PIN_SIZE || len < 1) {
-            ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+        // 1. Parse old PIN
+        byte oldPinLen = buf[ISO7816.OFFSET_CDATA];
+        short oldPinOffset = (short)(ISO7816.OFFSET_CDATA + 1);
+        
+        // 2. Parse new PIN
+        byte newPinLen = buf[oldPinOffset + oldPinLen];
+        short newPinOffset = (short)(oldPinOffset + oldPinLen + 1);
+        
+        // Validate length
+        if (newPinLen > MAX_PIN_SIZE || newPinLen < 1) ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+
+        // 3. Verify old PIN
+        if (pin.check(buf, oldPinOffset, oldPinLen) == false) {
+             ISOException.throwIt((short) (0x63C0 | pin.getTriesRemaining()));
         }
 
-        pin.update(buf, ISO7816.OFFSET_CDATA, len);
+        // ========================================================
+        // LOGIC RE-ENCRYPTION
+        // ========================================================
+        
+        // A. Use old PIN to decrypt current data (Ciphertext -> Plaintext)
+        // Only process if data is existed (userDataLen > 0)
+        if (userDataLen > 0) {
+            genAESKey(buf, oldPinOffset, oldPinLen);
+            aesCipher.init(aesKey, Cipher.MODE_DECRYPT);
+            // decrypt (In-place): userData -> userData
+            aesCipher.doFinal(userData, (short) 0, userDataLen, userData, (short) 0);
+        }
+
+        // B. Update PIN
+        pin.update(buf, newPinOffset, newPinLen);
+        
+        // C. Use new PIN to encrypt data (Plaintext -> Ciphertext)
+        if (userDataLen > 0) {
+            genAESKey(buf, newPinOffset, newPinLen);
+            aesCipher.init(aesKey, Cipher.MODE_ENCRYPT);
+            // encrypt (In-place): userData -> userData
+            aesCipher.doFinal(userData, (short) 0, userDataLen, userData, (short) 0);
+        }
+        
+        // Delete key from RAM
+        aesKey.clearKey();
     }
     
     private void resetPin(APDU apdu) {
         byte[] defaultPIN = {(byte)0x31, (byte)0x32, (byte)0x33, (byte)0x34, (byte)0x35, (byte)0x36};
         pin.update(defaultPIN, (short)0, (byte)6);
         pin.resetAndUnblock();
+        
+        // Vì d liu c c mã hóa bng PIN c (ã quên), nên nó gi là vô ngha.
+        // Xóa i  tránh gii mã sai.
+        Util.arrayFillNonAtomic(userData, (short) 0, MAX_DATA_SIZE, (byte) 0x00);
+        userDataLen = 0;
     }
     
     private void registerUser(APDU apdu) {         
