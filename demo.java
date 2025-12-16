@@ -1,4 +1,4 @@
-package demo; 
+package demo;
 import javacard.framework.APDU;
 import javacard.framework.Applet;
 import javacard.framework.ISO7816;
@@ -27,6 +27,9 @@ public class demo extends Applet {
 	// AES
     final static byte INS_SET_INFO = (byte) 0x21;
     final static byte INS_GET_INFO_SECURE = (byte) 0x22;
+    
+    // Sign
+    final static byte INS_SIGN_CHALLENGE = (byte) 0x33;
 
     // Card info & PIN
     private OwnerPIN pin;     
@@ -50,6 +53,9 @@ public class demo extends Applet {
     private Cipher aesCipher; // Encrypt/decrypt machine
     private MessageDigest sha; // Ham bam SHA tao tu PIN
     private byte[] tempBuffer; // Temporary memory to calculate HASH
+    
+    // RSA signature
+    private Signature rsaSig;
 
     public static void install(byte[] bArray, short bOffset, byte bLength) {         
         new demo().register(bArray, (short) (bOffset + 1), bArray[bOffset]);     
@@ -69,6 +75,14 @@ public class demo extends Applet {
         } catch (CryptoException e) {
             // X lý li nu th không h tr RSA (thng th JCOP u h tr)
             ISOException.throwIt(ISO7816.SW_FUNC_NOT_SUPPORTED);
+        }
+        
+        // Init signature
+        try {
+            // RSA with SHA-1 (PKCS#1 padding)
+			rsaSig = Signature.getInstance(Signature.ALG_RSA_SHA_PKCS1, false);
+        } catch (Exception e) {
+			ISOException.throwIt(ISO7816.SW_FUNC_NOT_SUPPORTED);
         }
         
         // Init mang anh
@@ -113,7 +127,10 @@ public class demo extends Applet {
                 break;             
             case INS_VERIFY:                 
                 verifyPin(apdu);                 
-                break;             
+                break;
+            case INS_SIGN_CHALLENGE: 
+				signChallenge(apdu);
+				break;       
             // case INS_GET_INFO:                 
                 // getInfo(apdu);                 
                 // break;
@@ -289,7 +306,32 @@ public class demo extends Applet {
         if (pin.check(buf, ISO7816.OFFSET_CDATA, (byte)len) == false) {
             ISOException.throwIt((short) (0x63C0 | pin.getTriesRemaining()));
         }
-    }     
+    }
+    
+    // SIGN CHALLENGE (RSA SIGNATURE)
+    // Input: Challenge (Random Bytes) from App
+    // Output: Signature (Signed with Private Key)
+    // ---------------------------------------------------------
+    private void signChallenge(APDU apdu) {
+        if (!pin.isValidated()) {
+            ISOException.throwIt(ISO7816.SW_SECURITY_STATUS_NOT_SATISFIED);
+        }
+
+        byte[] buf = apdu.getBuffer();
+        short len = apdu.setIncomingAndReceive(); // Read Challenge length send to cd
+
+        // Init signing mode with PRIVATE KEY
+        rsaSig.init(privateKey, Signature.MODE_SIGN);
+
+        // Sign
+        // Input: buf[OFFSET_CDATA], len
+        // Output: overwrite result (Signature) at the start of buf (offset 0)
+        // Return signature length (128 bytes with RSA 1024)
+        short sigLen = rsaSig.sign(buf, ISO7816.OFFSET_CDATA, len, buf, (short) 0);
+
+        // Send signature
+        apdu.setOutgoingAndSend((short) 0, sigLen);
+    }
 
 	// --- Encrypt ---		
     // APDU: [PIN_LEN] [PIN] [DATA_PADDED...]
