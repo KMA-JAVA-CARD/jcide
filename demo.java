@@ -30,6 +30,10 @@ public class demo extends Applet {
     
     // Sign
     final static byte INS_SIGN_CHALLENGE = (byte) 0x33;
+    
+    // Point balance
+	final static byte INS_GET_POINTS = (byte) 0x40;
+	final static byte INS_UPDATE_POINTS = (byte) 0x41;
 
     // Card info & PIN
     private OwnerPIN pin;     
@@ -56,6 +60,9 @@ public class demo extends Applet {
     
     // RSA signature
     private Signature rsaSig;
+    
+    // Point balance
+    private short pointBalance;
 
     public static void install(byte[] bArray, short bOffset, byte bLength) {         
         new demo().register(bArray, (short) (bOffset + 1), bArray[bOffset]);     
@@ -66,6 +73,7 @@ public class demo extends Applet {
         userData = new byte[MAX_DATA_SIZE];         
         userDataLen = 0;
         cardID = new byte[8];
+        pointBalance = 0;
 
         // Init RSA
         try {
@@ -161,6 +169,15 @@ public class demo extends Applet {
             case INS_GET_INFO_SECURE: 
             	getInfoSecure(apdu); 
             	break;
+            	
+			// Point processing handler
+			case INS_GET_POINTS:
+				getPoints(apdu);
+				break;
+			case INS_UPDATE_POINTS:
+				updatePoints(apdu);
+				break;
+
             default:                 
                 ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);         
         }     
@@ -463,4 +480,28 @@ public class demo extends Applet {
         apdu.setOutgoingLength(bytesToSend);
         apdu.sendBytesLong(avatarImage, offset, bytesToSend);
     }
+    
+    private void getPoints(APDU apdu) {
+		byte[] buffer = apdu.getBuffer();
+		apdu.setOutgoing();
+		apdu.setOutgoingLength((short) 2);
+		Util.setShort(buffer, (short) 0, pointBalance); // Ghi short vao buffer
+		apdu.sendBytes((short) 0, (short) 2);
+	}
+	
+	private void updatePoints(APDU apdu) {
+		if (!pin.isValidated()) {
+			ISOException.throwIt(ISO7816.SW_SECURITY_STATUS_NOT_SATISFIED);
+		}
+		
+		byte[] buffer = apdu.getBuffer();
+		short len = apdu.setIncomingAndReceive();
+		
+		if (len != 2) {
+			ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+		}
+		
+		// Ly im mi t lnh APDU ghi è vào bin
+		pointBalance = Util.getShort(buffer, ISO7816.OFFSET_CDATA);
+	}
 }
