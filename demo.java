@@ -27,6 +27,7 @@ public class demo extends Applet {
 	// AES
     final static byte INS_SET_INFO = (byte) 0x21;
     final static byte INS_GET_INFO_SECURE = (byte) 0x22;
+    final static byte INS_GET_RAW_USER_DATA = (byte) 0x25;
     
     // Sign
     final static byte INS_SIGN_CHALLENGE = (byte) 0x33;
@@ -43,7 +44,7 @@ public class demo extends Applet {
     
     // Image
     private byte[] avatarImage; 
-    final static short MAX_IMAGE_SIZE = (short) 4096;
+    final static short MAX_IMAGE_SIZE = (short) 4200;
     private short currentImageSize;
     
     // RSA
@@ -177,6 +178,10 @@ public class demo extends Applet {
 			case INS_UPDATE_POINTS:
 				updatePoints(apdu);
 				break;
+				
+			case INS_GET_RAW_USER_DATA:
+				getRawUserData(apdu);
+				break;
 
             default:                 
                 ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);         
@@ -277,7 +282,7 @@ public class demo extends Applet {
         pin.update(buf, (short)(ISO7816.OFFSET_CDATA + 1), pinLen);
         
         // Generate random ID
-        RandomData rng = RandomData.getInstance(RandomData.ALG_PSEUDO_RANDOM);
+        RandomData rng = RandomData.getInstance(RandomData.ALG_SECURE_RANDOM);
         rng.generateData(cardID, (short) 0, (short) 8);
         
         // Generate RSA
@@ -504,4 +509,10 @@ public class demo extends Applet {
 		// Ly im mi t lnh APDU ghi è vào bin
 		pointBalance = Util.getShort(buffer, ISO7816.OFFSET_CDATA);
 	}
+	
+	private void getRawUserData(APDU apdu) {
+        apdu.setOutgoing();
+        apdu.setOutgoingLength(userDataLen);
+        apdu.sendBytesLong(userData, (short) 0, userDataLen);
+    }
 }
